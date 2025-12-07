@@ -43,3 +43,6 @@ output/
 *.html
 *.png
 *.pdf
+
+# Project notes (do not commit)
+CLAUDE.md
