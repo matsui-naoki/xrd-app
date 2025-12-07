@@ -1,0 +1,201 @@
+/* XRD Analyzer Custom Styles */
+
+/* Main container */
+.main .block-container {
+    padding-top: 1rem;
+    padding-bottom: 1rem;
+    max-width: 100%;
+}
+
+/* Sidebar */
+section[data-testid="stSidebar"] {
+    padding-top: 1rem;
+    background-color: #f8f9fa;
+}
+
+/* Headers */
+h1 {
+    color: #1f77b4;
+    font-size: 2rem !important;
+    font-weight: 700 !important;
+}
+
+h2 {
+    color: #2c3e50;
+    font-size: 1.5rem !important;
+    font-weight: 600 !important;
+    border-bottom: 2px solid #1f77b4;
+    padding-bottom: 0.5rem;
+}
+
+h3 {
+    color: #34495e;
+    font-size: 1.2rem !important;
+    font-weight: 600 !important;
+}
+
+/* Metric cards */
+div[data-testid="metric-container"] {
+    background-color: #f0f2f6;
+    padding: 1rem;
+    border-radius: 0.5rem;
+    border-left: 4px solid #1f77b4;
+}
+
+/* Buttons */
+.stButton > button {
+    width: 100%;
+    border-radius: 0.5rem;
+    font-weight: 500;
+    transition: all 0.3s ease;
+}
+
+.stButton > button:hover {
+    transform: translateY(-1px);
+    box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
+}
+
+/* Primary button */
+.stButton > button[kind="primary"] {
+    background-color: #1f77b4;
+    color: white;
+}
+
+/* File uploader */
+div[data-testid="stFileUploader"] {
+    border: 2px dashed #1f77b4;
+    border-radius: 0.5rem;
+    padding: 1rem;
+    background-color: #f8f9fa;
+}
+
+/* Info boxes */
+.stAlert {
+    border-radius: 0.5rem;
+}
+
+/* Success message */
+div[data-testid="stAlert"][data-baseweb="notification"] {
+    border-radius: 0.5rem;
+}
+
+/* Expanders */
+details[data-testid="stExpander"] {
+    border: 1px solid #e0e0e0;
+    border-radius: 0.5rem;
+    margin-bottom: 1rem;
+}
+
+details[data-testid="stExpander"] summary {
+    font-weight: 600;
+    color: #1f77b4;
+}
+
+/* Selectbox */
+div[data-testid="stSelectbox"] {
+    margin-bottom: 0.5rem;
+}
+
+/* Slider */
+div[data-testid="stSlider"] {
+    padding-top: 0.5rem;
+    padding-bottom: 0.5rem;
+}
+
+/* Number input */
+div[data-testid="stNumberInput"] {
+    margin-bottom: 0.5rem;
+}
+
+/* Checkbox */
+div[data-testid="stCheckbox"] {
+    padding: 0.25rem 0;
+}
+
+/* Tables */
+.dataframe {
+    font-size: 0.9rem;
+}
+
+.dataframe th {
+    background-color: #1f77b4 !important;
+    color: white !important;
+}
+
+/* Tabs */
+.stTabs [data-baseweb="tab-list"] {
+    gap: 8px;
+}
+
+.stTabs [data-baseweb="tab"] {
+    border-radius: 0.5rem 0.5rem 0 0;
+    padding: 0.5rem 1rem;
+    font-weight: 500;
+}
+
+.stTabs [aria-selected="true"] {
+    background-color: #1f77b4 !important;
+    color: white !important;
+}
+
+/* Progress bar */
+.stProgress > div > div > div {
+    background-color: #1f77b4;
+}
+
+/* Hide Streamlit branding */
+#MainMenu {visibility: hidden;}
+footer {visibility: hidden;}
+
+/* Custom scrollbar */
+::-webkit-scrollbar {
+    width: 8px;
+    height: 8px;
+}
+
+::-webkit-scrollbar-track {
+    background: #f1f1f1;
+    border-radius: 4px;
+}
+
+::-webkit-scrollbar-thumb {
+    background: #888;
+    border-radius: 4px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+    background: #555;
+}
+
+/* Plotly chart container */
+.js-plotly-plot {
+    border-radius: 0.5rem;
+    box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
+}
+
+/* Download button */
+.stDownloadButton > button {
+    background-color: #27ae60;
+    color: white;
+}
+
+.stDownloadButton > button:hover {
+    background-color: #219a52;
+}
+
+/* Divider */
+hr {
+    border: none;
+    height: 1px;
+    background: linear-gradient(to right, transparent, #1f77b4, transparent);
+    margin: 1rem 0;
+}
+
+/* Card-like containers */
+div[data-testid="stVerticalBlock"] > div[data-testid="stVerticalBlock"] {
+    background-color: white;
+    padding: 1rem;
+    border-radius: 0.5rem;
+    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
+    margin-bottom: 1rem;
+}
