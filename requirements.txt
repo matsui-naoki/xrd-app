@@ -1,5 +1,6 @@
 # XRD Analyzer Requirements
 
+# ===== Core Dependencies (Required) =====
 # Web framework
 streamlit>=1.28.0
 
@@ -10,19 +11,23 @@ scipy>=1.10.0
 
 # Plotting
 plotly>=5.17.0
-matplotlib>=3.7.0
 
 # Machine learning
 scikit-learn>=1.3.0
 
-# XRD specific
-pybeads>=1.0.0
-dtw-python>=1.4.0
-
-# Optional advanced features
-umap-learn>=0.5.3
-pymatgen>=2023.12.0
-torch>=2.0.0
-
 # Progress bar
 tqdm>=4.66.0
+
+# ===== Recommended Dependencies (Full Features) =====
+# Background removal (BEADS algorithm)
+pybeads>=1.0.0
+
+# DTW distance calculation
+dtw-python>=1.4.0
+
+# ===== Optional Dependencies =====
+# UMAP dimension reduction
+# umap-learn>=0.5.3
+
+# Static plots (optional, Plotly is primary)
+# matplotlib>=3.7.0

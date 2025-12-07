@@ -33,6 +33,12 @@ from components.plots import (
 )
 from components.styles import inject_custom_css
 from utils.help_texts import get_help
+from utils.logger import (
+    log_info, log_warning, log_error,
+    log_analysis_start, log_analysis_complete,
+    log_preprocessing_start, log_preprocessing_complete,
+    log_file_load, log_file_error
+)
 
 
 # Page configuration
@@ -156,11 +162,14 @@ def process_uploaded_files(uploaded_files):
                 if is_valid:
                     st.session_state['files'][uploaded_file.name] = data
                     st.session_state['original_files'][uploaded_file.name] = data.copy()
+                    log_file_load(uploaded_file.name, len(data['two_theta']))
                 else:
                     st.sidebar.error(f"Invalid file {uploaded_file.name}: {error_msg}")
+                    log_file_error(uploaded_file.name, error_msg)
 
             except Exception as e:
                 st.sidebar.error(f"Error loading {uploaded_file.name}: {str(e)}")
+                log_file_error(uploaded_file.name, str(e))
 
 
 def sidebar_file_manager():
@@ -286,32 +295,39 @@ def apply_preprocessing():
         return
 
     settings = st.session_state['preprocess_settings']
+    n_files = len(st.session_state['files'])
+    log_preprocessing_start(n_files)
 
     with st.spinner("Applying preprocessing..."):
-        # Convert to dict format
-        xrds = convert_to_dict_format(st.session_state['files'])
+        try:
+            # Convert to dict format
+            xrds = convert_to_dict_format(st.session_state['files'])
 
-        # Apply preprocessing pipeline
-        processed = preprocess_pipeline(
-            xrds,
-            normalize=settings['normalize'],
-            trim_range=settings['trim_range'] if settings['trim_range'][0][0] < settings['trim_range'][0][1] else None,
-            remove_bg=settings['remove_bg'],
-            remove_nan=settings['remove_nan'],
-            zero_negative=settings['zero_negative'],
-            smooth=settings['smooth'],
-            interpolate=settings['interpolate'],
-            show_progress=False
-        )
+            # Apply preprocessing pipeline
+            processed = preprocess_pipeline(
+                xrds,
+                normalize=settings['normalize'],
+                trim_range=settings['trim_range'] if settings['trim_range'][0][0] < settings['trim_range'][0][1] else None,
+                remove_bg=settings['remove_bg'],
+                remove_nan=settings['remove_nan'],
+                zero_negative=settings['zero_negative'],
+                smooth=settings['smooth'],
+                interpolate=settings['interpolate'],
+                show_progress=False
+            )
 
-        # Convert back and store
-        st.session_state['processed_files'] = dict_to_files_format(
-            processed,
-            st.session_state['files']
-        )
-        st.session_state['preprocessing_applied'] = True
+            # Convert back and store
+            st.session_state['processed_files'] = dict_to_files_format(
+                processed,
+                st.session_state['files']
+            )
+            st.session_state['preprocessing_applied'] = True
+            log_preprocessing_complete()
+            st.sidebar.success("Preprocessing complete!")
 
-    st.sidebar.success("Preprocessing complete!")
+        except Exception as e:
+            log_error(f"Preprocessing failed: {str(e)}", exc_info=True)
+            st.sidebar.error(f"Preprocessing failed: {str(e)}")
 
 
 def sidebar_analysis():
@@ -406,6 +422,9 @@ def run_analysis():
 
     settings = st.session_state['analysis_settings']
     xrds = convert_to_dict_format(data)
+    n_samples = len(xrds)
+
+    log_analysis_start(n_samples, settings['n_components'], settings['distance_method'])
 
     with st.spinner("Running analysis..."):
         try:
@@ -421,9 +440,17 @@ def run_analysis():
             )
 
             st.session_state['analysis_results'] = results
+            log_analysis_complete(results['n_clusters'], results['reconstruction_error'])
             st.sidebar.success(f"Analysis complete! Found {results['n_clusters']} clusters.")
 
+        except ValueError as e:
+            log_error(f"Invalid parameters: {str(e)}")
+            st.sidebar.error(f"Invalid parameters: {str(e)}")
+        except MemoryError as e:
+            log_error(f"Memory error - dataset too large: {str(e)}")
+            st.sidebar.error("Memory error: Dataset may be too large. Try reducing sample count.")
         except Exception as e:
+            log_error(f"Analysis failed: {str(e)}", exc_info=True)
             st.sidebar.error(f"Analysis failed: {str(e)}")
 
 
