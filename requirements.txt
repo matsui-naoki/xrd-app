@@ -29,5 +29,8 @@ dtw-python>=1.4.0
 # UMAP dimension reduction
 # umap-learn>=0.5.3
 
+# High-resolution figure export
+kaleido>=0.2.1
+
 # Static plots (optional, Plotly is primary)
 # matplotlib>=3.7.0

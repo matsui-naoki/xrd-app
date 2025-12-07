@@ -206,6 +206,73 @@ class TestDataLoader:
         assert not is_valid, "Mismatched lengths should be invalid"
 
 
+class TestAdvancedAnalysis:
+    """Test advanced analysis functions"""
+
+    def setup_method(self):
+        """Set up test data"""
+        np.random.seed(42)
+        self.n_samples = 10
+        self.n_2theta = 100
+        self.n_elements = 4
+
+        # Generate XRD data
+        two_theta = np.linspace(10, 60, self.n_2theta).tolist()
+        self.xrd_data = {}
+        for i in range(self.n_samples):
+            intensity = np.abs(np.random.randn(self.n_2theta) * 50 + 100).tolist()
+            self.xrd_data[i + 1] = [two_theta, intensity]
+
+        # Generate composition data
+        self.compositions = np.random.rand(self.n_samples, self.n_elements)
+        self.compositions = self.compositions / self.compositions.sum(axis=1, keepdims=True)
+
+    def test_multi_view_nmf(self):
+        """Test multi-view NMF"""
+        from tools.analysis import multi_view_nmf, xrd_to_matrix
+
+        # Prepare data
+        xrd_matrix, _, _ = xrd_to_matrix(self.xrd_data)
+
+        # Run multi-view NMF
+        W_list, H = multi_view_nmf(
+            [xrd_matrix, self.compositions],
+            k=3,
+            max_iter=100,
+            show_progress=False
+        )
+
+        # Check outputs
+        assert len(W_list) == 2, "Should return 2 basis matrices"
+        assert W_list[0].shape[0] == 3, "XRD basis should have 3 components"
+        assert W_list[1].shape[0] == 3, "Composition basis should have 3 components"
+        assert H.shape == (self.n_samples, 3), "Coefficients shape mismatch"
+
+    def test_endmember_decomposition(self):
+        """Test endmember decomposition"""
+        from tools.analysis import endmember_decomposition
+
+        # Define simple endmembers
+        endmembers = np.array([
+            [1, 0, 0, 0],
+            [0, 1, 0, 0],
+            [0, 0, 1, 0]
+        ])
+
+        # Run decomposition
+        coefficients = endmember_decomposition(
+            self.compositions,
+            endmembers
+        )
+
+        # Check outputs
+        assert coefficients.shape == (self.n_samples, 3), "Coefficients shape mismatch"
+        # Check coefficients sum to 1
+        assert np.allclose(coefficients.sum(axis=1), 1.0), "Coefficients should sum to 1"
+        # Check non-negative
+        assert np.all(coefficients >= 0), "Coefficients should be non-negative"
+
+
 def run_tests():
     """Run all tests"""
     pytest.main([__file__, '-v'])

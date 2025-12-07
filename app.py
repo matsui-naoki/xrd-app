@@ -11,7 +11,10 @@ import io
 from typing import Dict, List, Optional
 
 # Local imports
-from tools.data_loader import load_xrd_file, validate_xrd_data, convert_to_dict_format, dict_to_files_format
+from tools.data_loader import (
+    load_xrd_file, validate_xrd_data, convert_to_dict_format,
+    dict_to_files_format, get_file_columns, parse_with_column_selection
+)
 from tools.preprocessing import (
     normalize_xrd, trim_2theta, remove_background,
     remove_xrd_nan, negative_to_zero, sort_dict_by_key,
@@ -22,14 +25,18 @@ from tools.analysis import (
     calculate_cosine_matrix, calculate_correlation_matrix,
     dim_reduction, run_dbscan, merge_cluster_ratio,
     get_argmax_prob, normalize_coefficient_by_integral,
-    find_optimal_n_components, analyze_xrd_pipeline, xrd_to_matrix
+    find_optimal_n_components, analyze_xrd_pipeline, xrd_to_matrix,
+    multi_view_nmf, endmember_decomposition
 )
 from components.plots import (
     create_xrd_plot, create_heatmap, create_nmf_summary_plot,
     create_cluster_scatter, create_ternary_plot,
     create_probability_heatmap, create_reconstruction_error_plot,
     create_basis_pattern_plot, create_coefficient_plot,
-    create_sample_comparison_plot, COLORS
+    create_sample_comparison_plot, create_multi_view_nmf_plot,
+    create_endmember_plot, create_xrd_publication_plot,
+    create_column_preview_plot, apply_publication_style,
+    export_figure_bytes, COLORS
 )
 from components.styles import inject_custom_css
 from utils.help_texts import get_help
@@ -62,6 +69,15 @@ def initialize_session_state():
         'selected_file': None,
         'analysis_results': None,
         'preprocessing_applied': False,
+        'multi_view_results': None,
+
+        # Column selection for custom file parsing
+        'column_settings': {},
+
+        # Composition data
+        'composition_data': None,
+        'composition_elements': [],
+        'endmembers': None,
 
         # Preprocessing settings
         'preprocess_settings': {
@@ -82,13 +98,23 @@ def initialize_session_state():
             'dtw_window': 30,
             'dim_reduction_method': 'MDS',
             'dbscan_eps': 20.0,
-            'dbscan_min_samples': 1
+            'dbscan_min_samples': 1,
+            'use_multi_view': False
         },
 
         # Mapping settings
         'mapping_settings': {
             'compositions': {},
             'axis_labels': ['A', 'B', 'C']
+        },
+
+        # Figure export settings
+        'export_settings': {
+            'width': 800,
+            'height': 600,
+            'format': 'png',
+            'dpi': 300,
+            'publication_style': True
         },
 
         # UI state
@@ -471,22 +497,28 @@ def main_panel():
         return
 
     # Create tabs
-    tabs = st.tabs(["📊 Data", "🔧 Preprocessing", "🔬 Analysis", "🗺️ Mapping", "📋 Results"])
+    tabs = st.tabs(["📊 Data", "🧪 Composition", "🔧 Preprocessing", "🔬 Analysis", "🗺️ Mapping", "📋 Results", "📄 Export"])
 
     with tabs[0]:
         show_data_tab()
 
     with tabs[1]:
-        show_preprocessing_tab()
+        show_composition_tab()
 
     with tabs[2]:
-        show_analysis_tab()
+        show_preprocessing_tab()
 
     with tabs[3]:
-        show_mapping_tab()
+        show_analysis_tab()
 
     with tabs[4]:
+        show_mapping_tab()
+
+    with tabs[5]:
         show_results_tab()
+
+    with tabs[6]:
+        show_export_tab()
 
 
 def show_welcome_message():
@@ -510,9 +542,14 @@ def show_welcome_message():
     4. Explore clustering results and phase mappings
 
     ### Supported File Formats
-    - `.xy`, `.txt`: Two-column format (2θ, intensity)
+    - `.xy`, `.txt`, `.dat`: Two-column format (2θ, intensity)
     - `.csv`: CSV with 2θ and intensity columns
     - `.ras`: Rigaku RAS format
+
+    ### Advanced Features
+    - **Multi-view NMF**: Simultaneous decomposition with composition data
+    - **Publication-ready Export**: High-resolution figure export
+    - **Custom Column Selection**: Handle non-standard file formats
     """)
 
 
@@ -900,6 +937,429 @@ def show_results_tab():
     })
 
     st.dataframe(cluster_df, use_container_width=True)
+
+
+def show_composition_tab():
+    """Show composition input and Multi-view NMF tab"""
+    st.header("Composition Data & Multi-view Analysis")
+
+    st.markdown("""
+    Upload composition data (XRF spectra or composition values) to enable Multi-view NMF,
+    which simultaneously decomposes XRD patterns and composition data.
+    """)
+
+    # Composition input method selection
+    col1, col2 = st.columns([1, 1])
+
+    with col1:
+        input_method = st.radio(
+            "Input Method",
+            options=["CSV Upload", "Manual Entry", "Endmember Definition"],
+            help="Choose how to input composition data"
+        )
+
+    with col2:
+        if input_method == "CSV Upload":
+            comp_file = st.file_uploader(
+                "Upload Composition CSV",
+                type=['csv'],
+                help="CSV file with samples as rows and elements as columns"
+            )
+
+            if comp_file:
+                try:
+                    comp_df = pd.read_csv(comp_file)
+                    st.session_state['composition_data'] = comp_df.values
+                    st.session_state['composition_elements'] = list(comp_df.columns)
+                    st.success(f"Loaded {len(comp_df)} samples with {len(comp_df.columns)} elements")
+                except Exception as e:
+                    st.error(f"Error loading composition file: {e}")
+
+    # Display current composition data
+    if st.session_state['composition_data'] is not None:
+        st.subheader("Current Composition Data")
+        comp_df = pd.DataFrame(
+            st.session_state['composition_data'],
+            columns=st.session_state['composition_elements']
+        )
+        st.dataframe(comp_df.head(10), use_container_width=True)
+
+        if len(comp_df) > 10:
+            st.info(f"Showing first 10 of {len(comp_df)} samples")
+
+    # Manual entry section
+    if input_method == "Manual Entry":
+        st.subheader("Manual Composition Entry")
+
+        n_samples = len(st.session_state['files']) if st.session_state['files'] else 5
+        n_elements = st.number_input("Number of Elements", min_value=2, max_value=10, value=3)
+
+        # Element names
+        element_names = []
+        cols = st.columns(n_elements)
+        for i, col in enumerate(cols):
+            with col:
+                name = st.text_input(f"Element {i+1}", value=f"E{i+1}", key=f"elem_{i}")
+                element_names.append(name)
+
+        # Generate input table
+        st.markdown("**Enter compositions (comma-separated per sample):**")
+        compositions = []
+        for i in range(min(n_samples, 20)):
+            default_val = ", ".join(["0.33"] * n_elements)
+            comp_str = st.text_input(
+                f"Sample {i+1}",
+                value=default_val,
+                key=f"manual_comp_{i}"
+            )
+            try:
+                values = [float(x.strip()) for x in comp_str.split(',')]
+                if len(values) == n_elements:
+                    compositions.append(values)
+            except:
+                pass
+
+        if st.button("Apply Manual Compositions"):
+            if compositions:
+                st.session_state['composition_data'] = np.array(compositions)
+                st.session_state['composition_elements'] = element_names
+                st.success(f"Loaded {len(compositions)} sample compositions")
+                st.rerun()
+
+    # Endmember definition section
+    if input_method == "Endmember Definition":
+        st.subheader("Define Endmembers")
+
+        st.markdown("""
+        Define endmember compositions to decompose sample compositions into
+        contributions from each endmember phase.
+        """)
+
+        n_endmembers = st.number_input("Number of Endmembers", min_value=2, max_value=5, value=3)
+        n_elements = st.number_input("Number of Elements", min_value=2, max_value=10, value=3, key="em_n_elements")
+
+        # Element names
+        element_names = []
+        cols = st.columns(n_elements)
+        for i, col in enumerate(cols):
+            with col:
+                name = st.text_input(f"Element {i+1}", value=f"E{i+1}", key=f"em_elem_{i}")
+                element_names.append(name)
+
+        # Endmember compositions
+        st.markdown("**Define endmember compositions:**")
+        endmembers = []
+        for i in range(n_endmembers):
+            default_val = ", ".join(["1.0" if j == i else "0.0" for j in range(n_elements)])
+            em_str = st.text_input(
+                f"Endmember {i+1}",
+                value=default_val,
+                key=f"endmember_{i}"
+            )
+            try:
+                values = [float(x.strip()) for x in em_str.split(',')]
+                if len(values) == n_elements:
+                    endmembers.append(values)
+            except:
+                pass
+
+        if st.button("Set Endmembers") and len(endmembers) == n_endmembers:
+            st.session_state['endmembers'] = np.array(endmembers)
+            st.session_state['composition_elements'] = element_names
+            st.success(f"Set {n_endmembers} endmembers")
+
+    # Multi-view NMF section
+    st.markdown("---")
+    st.subheader("Multi-view NMF Analysis")
+
+    if st.session_state['composition_data'] is None:
+        st.warning("Please load composition data first to use Multi-view NMF")
+    elif not st.session_state['files']:
+        st.warning("Please load XRD data first")
+    else:
+        n_samples_xrd = len(st.session_state['files'])
+        n_samples_comp = len(st.session_state['composition_data'])
+
+        if n_samples_xrd != n_samples_comp:
+            st.warning(f"Sample count mismatch: {n_samples_xrd} XRD samples vs {n_samples_comp} composition samples")
+        else:
+            col1, col2 = st.columns(2)
+
+            with col1:
+                mv_n_components = st.slider(
+                    "Number of Components",
+                    min_value=2,
+                    max_value=min(20, n_samples_xrd - 1),
+                    value=min(5, n_samples_xrd - 1)
+                )
+
+            with col2:
+                lambda_reg = st.slider(
+                    "Regularization",
+                    min_value=0.0,
+                    max_value=1.0,
+                    value=0.0,
+                    step=0.1,
+                    help="L2 regularization strength"
+                )
+
+            if st.button("Run Multi-view NMF", type="primary"):
+                with st.spinner("Running Multi-view NMF..."):
+                    try:
+                        # Prepare data
+                        xrds = convert_to_dict_format(get_current_data())
+                        xrd_matrix, two_theta, _ = xrd_to_matrix(xrds)
+                        comp_matrix = st.session_state['composition_data']
+
+                        # Run Multi-view NMF
+                        W_list, H = multi_view_nmf(
+                            [xrd_matrix, comp_matrix],
+                            k=mv_n_components,
+                            lambda_W=lambda_reg,
+                            lambda_H=lambda_reg,
+                            show_progress=False
+                        )
+
+                        st.session_state['multi_view_results'] = {
+                            'xrd_basis': W_list[0],
+                            'comp_basis': W_list[1],
+                            'coefficients': H,
+                            'two_theta': two_theta,
+                            'elements': st.session_state['composition_elements']
+                        }
+
+                        st.success("Multi-view NMF complete!")
+
+                    except Exception as e:
+                        st.error(f"Multi-view NMF failed: {str(e)}")
+
+    # Display Multi-view NMF results
+    if st.session_state['multi_view_results'] is not None:
+        st.markdown("---")
+        st.subheader("Multi-view NMF Results")
+
+        results = st.session_state['multi_view_results']
+        fig = create_multi_view_nmf_plot(
+            results['xrd_basis'],
+            results['comp_basis'],
+            results['coefficients'],
+            results['two_theta'],
+            results['elements']
+        )
+        st.plotly_chart(fig, use_container_width=True)
+
+    # Endmember decomposition section
+    if st.session_state['endmembers'] is not None and st.session_state['composition_data'] is not None:
+        st.markdown("---")
+        st.subheader("Endmember Decomposition")
+
+        if st.button("Run Endmember Decomposition"):
+            with st.spinner("Running decomposition..."):
+                try:
+                    coefficients = endmember_decomposition(
+                        st.session_state['composition_data'],
+                        st.session_state['endmembers']
+                    )
+
+                    fig = create_endmember_plot(
+                        st.session_state['composition_data'],
+                        st.session_state['endmembers'],
+                        coefficients,
+                        st.session_state['composition_elements']
+                    )
+                    st.plotly_chart(fig, use_container_width=True)
+
+                except Exception as e:
+                    st.error(f"Decomposition failed: {str(e)}")
+
+
+def show_export_tab():
+    """Show publication-ready figure export tab"""
+    st.header("Publication-Ready Figure Export")
+
+    st.markdown("""
+    Export high-resolution figures suitable for publications and conferences.
+    Customize styling, dimensions, and file format.
+    """)
+
+    # Export settings
+    col1, col2, col3 = st.columns(3)
+
+    settings = st.session_state['export_settings']
+
+    with col1:
+        settings['width'] = st.number_input(
+            "Width (px)",
+            min_value=400,
+            max_value=2000,
+            value=settings['width'],
+            step=50
+        )
+
+    with col2:
+        settings['height'] = st.number_input(
+            "Height (px)",
+            min_value=300,
+            max_value=1500,
+            value=settings['height'],
+            step=50
+        )
+
+    with col3:
+        settings['format'] = st.selectbox(
+            "Format",
+            options=['png', 'svg', 'pdf'],
+            index=['png', 'svg', 'pdf'].index(settings['format'])
+        )
+
+    col1, col2 = st.columns(2)
+
+    with col1:
+        settings['dpi'] = st.selectbox(
+            "DPI (for raster)",
+            options=[150, 300, 600],
+            index=[150, 300, 600].index(settings['dpi'])
+        )
+
+    with col2:
+        settings['publication_style'] = st.checkbox(
+            "Apply Publication Style",
+            value=settings['publication_style'],
+            help="Apply professional styling (Arial font, inside ticks, no grid)"
+        )
+
+    st.markdown("---")
+
+    # Figure selection and export
+    st.subheader("Select Figure to Export")
+
+    data = get_current_data()
+    results = st.session_state['analysis_results']
+
+    figure_type = st.selectbox(
+        "Figure Type",
+        options=[
+            "XRD Patterns (Stacked)",
+            "XRD Patterns (Overlay)",
+            "XRD Heatmap",
+            "NMF Basis Patterns",
+            "Cluster Distribution",
+            "Coefficient Heatmap",
+            "Probability Heatmap",
+            "Ternary Diagram"
+        ]
+    )
+
+    if data:
+        xrds = convert_to_dict_format(data)
+
+        # Generate selected figure
+        fig = None
+
+        if figure_type == "XRD Patterns (Stacked)":
+            fig = create_xrd_plot(xrds, offset_mode=True, show_legend=False)
+        elif figure_type == "XRD Patterns (Overlay)":
+            fig = create_xrd_plot(xrds, offset_mode=False, show_legend=True)
+        elif figure_type == "XRD Heatmap":
+            fig = create_heatmap(xrds)
+        elif results is not None:
+            if figure_type == "NMF Basis Patterns":
+                fig = create_basis_pattern_plot(
+                    results['norm_basis_vector'],
+                    results['two_theta'],
+                    labels=results['labels']
+                )
+            elif figure_type == "Cluster Distribution":
+                fig = create_cluster_scatter(
+                    results['embedding'],
+                    results['labels']
+                )
+            elif figure_type == "Coefficient Heatmap":
+                fig = create_coefficient_plot(
+                    results['coefficient'],
+                    results['sample_ids']
+                )
+            elif figure_type == "Probability Heatmap":
+                fig = create_probability_heatmap(
+                    np.array(results['probabilities']),
+                    results['sample_ids']
+                )
+            elif figure_type == "Ternary Diagram":
+                compositions = st.session_state['mapping_settings'].get('compositions', {})
+                if compositions:
+                    comp_list = []
+                    labels_list = []
+                    for i, sid in enumerate(results['sample_ids']):
+                        if sid in compositions:
+                            comp_list.append(compositions[sid])
+                            labels_list.append(results['argmax'][i])
+                    if comp_list:
+                        fig = create_ternary_plot(
+                            comp_list,
+                            labels_list,
+                            axis_labels=st.session_state['mapping_settings']['axis_labels']
+                        )
+
+        if fig is not None:
+            # Apply publication style if requested
+            if settings['publication_style']:
+                fig = apply_publication_style(
+                    fig,
+                    width=settings['width'],
+                    height=settings['height']
+                )
+
+            # Preview
+            st.subheader("Preview")
+            st.plotly_chart(fig, use_container_width=True)
+
+            # Export button
+            scale = settings['dpi'] // 100
+
+            try:
+                # Try to export
+                col1, col2 = st.columns(2)
+
+                with col1:
+                    if st.button("Generate Export File", type="primary"):
+                        with st.spinner("Generating file..."):
+                            try:
+                                img_bytes = export_figure_bytes(
+                                    fig,
+                                    format=settings['format'],
+                                    width=settings['width'],
+                                    height=settings['height'],
+                                    scale=scale
+                                )
+
+                                st.download_button(
+                                    f"Download {settings['format'].upper()}",
+                                    data=img_bytes,
+                                    file_name=f"xrd_figure.{settings['format']}",
+                                    mime=f"image/{settings['format']}",
+                                    use_container_width=True
+                                )
+                            except ImportError:
+                                st.warning("kaleido is required for image export. Install with: pip install kaleido")
+
+                with col2:
+                    # HTML export (always available)
+                    html_bytes = fig.to_html(include_plotlyjs=True).encode()
+                    st.download_button(
+                        "Download Interactive HTML",
+                        data=html_bytes,
+                        file_name="xrd_figure.html",
+                        mime="text/html",
+                        use_container_width=True
+                    )
+
+            except Exception as e:
+                st.error(f"Export failed: {str(e)}")
+        else:
+            if results is None and figure_type not in ["XRD Patterns (Stacked)", "XRD Patterns (Overlay)", "XRD Heatmap"]:
+                st.warning("Please run analysis first to export this figure type")
+    else:
+        st.warning("Please load XRD data first")
 
 
 def save_session():

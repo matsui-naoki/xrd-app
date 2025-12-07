@@ -1,13 +1,14 @@
 """
 XRD Visualization Components
 Plotly-based interactive plots for XRD analysis
+with publication-ready figure export capabilities
 """
 
 import numpy as np
 import plotly.graph_objects as go
 from plotly.subplots import make_subplots
 from typing import Dict, List, Tuple, Optional, Union
-from matplotlib.colors import ListedColormap
+import io
 
 # Color palette
 COLORS = [
@@ -27,6 +28,123 @@ COLORS = [
     '#800080',  # purple
     '#ffa500',  # orange
 ]
+
+# Publication-ready styling settings
+PUBLICATION_STYLE = {
+    'font_family': 'Arial',
+    'font_size': 14,
+    'axis_line_width': 1,
+    'tick_font_size': 12,
+    'title_font_size': 16,
+    'legend_font_size': 11,
+    'line_width': 1.5,
+    'marker_size': 8,
+}
+
+
+def apply_publication_style(fig: go.Figure,
+                            width: int = 800,
+                            height: int = 600,
+                            show_grid: bool = False) -> go.Figure:
+    """
+    Apply publication-ready styling to a plotly figure
+
+    Args:
+        fig: Plotly figure to style
+        width: Figure width in pixels
+        height: Figure height in pixels
+        show_grid: Whether to show grid lines
+
+    Returns:
+        Styled figure
+    """
+    style = PUBLICATION_STYLE
+
+    fig.update_layout(
+        font=dict(
+            family=style['font_family'],
+            size=style['font_size'],
+            color='black'
+        ),
+        width=width,
+        height=height,
+        plot_bgcolor='white',
+        paper_bgcolor='white',
+        margin=dict(l=70, r=20, t=50, b=60),
+    )
+
+    # Update axes
+    axis_settings = dict(
+        showgrid=show_grid,
+        gridcolor='lightgray' if show_grid else None,
+        showline=True,
+        linewidth=style['axis_line_width'],
+        linecolor='black',
+        tickcolor='black',
+        tickfont=dict(
+            family=style['font_family'],
+            size=style['tick_font_size'],
+            color='black'
+        ),
+        title_font=dict(
+            family=style['font_family'],
+            size=style['title_font_size'],
+            color='black'
+        ),
+        mirror=True,
+        ticks='inside',
+        ticklen=5,
+        zeroline=False,
+    )
+
+    fig.update_xaxes(**axis_settings)
+    fig.update_yaxes(**axis_settings)
+
+    # Update legend
+    fig.update_layout(
+        legend=dict(
+            font=dict(
+                family=style['font_family'],
+                size=style['legend_font_size'],
+                color='black'
+            ),
+            bgcolor='rgba(255, 255, 255, 0.8)',
+            bordercolor='black',
+            borderwidth=1,
+        )
+    )
+
+    return fig
+
+
+def export_figure_bytes(fig: go.Figure,
+                        format: str = 'png',
+                        width: int = 800,
+                        height: int = 600,
+                        scale: int = 3) -> bytes:
+    """
+    Export figure to bytes for download
+
+    Args:
+        fig: Plotly figure
+        format: Export format ('png', 'svg', 'pdf')
+        width: Figure width
+        height: Figure height
+        scale: Scale factor for resolution (3 = 300 DPI at 100% size)
+
+    Returns:
+        Image bytes
+    """
+    try:
+        import kaleido
+        return fig.to_image(
+            format=format,
+            width=width,
+            height=height,
+            scale=scale
+        )
+    except ImportError:
+        raise ImportError("kaleido is required for image export. Install with: pip install kaleido")
 
 
 def create_xrd_plot(xrd_data: Dict[int, List],
@@ -574,5 +692,283 @@ def create_sample_comparison_plot(xrd_data: Dict[int, List],
             x=0.99
         )
     )
+
+    return fig
+
+
+def create_multi_view_nmf_plot(xrd_basis: np.ndarray,
+                                comp_basis: np.ndarray,
+                                coefficients: np.ndarray,
+                                two_theta: np.ndarray,
+                                element_names: List[str],
+                                title: str = "Multi-view NMF Results") -> go.Figure:
+    """
+    Create visualization for multi-view NMF results
+
+    Args:
+        xrd_basis: XRD basis vectors (n_components, n_2theta)
+        comp_basis: Composition basis vectors (n_components, n_elements)
+        coefficients: Shared coefficient matrix (n_samples, n_components)
+        two_theta: 2theta values
+        element_names: List of element names
+        title: Plot title
+
+    Returns:
+        Plotly figure with subplots
+    """
+    n_components = xrd_basis.shape[0]
+
+    fig = make_subplots(
+        rows=2, cols=2,
+        subplot_titles=(
+            'XRD Basis Patterns',
+            'Composition Basis',
+            'Sample Coefficients',
+            'Component Contributions'
+        ),
+        specs=[[{"rowspan": 1}, {"type": "bar"}],
+               [{"type": "heatmap"}, {"type": "bar"}]],
+        vertical_spacing=0.15,
+        horizontal_spacing=0.12
+    )
+
+    # Plot 1: XRD Basis Patterns
+    offset = 0
+    for i in range(n_components):
+        fig.add_trace(go.Scatter(
+            x=two_theta,
+            y=xrd_basis[i] / np.max(xrd_basis[i]) + offset,
+            mode='lines',
+            name=f'Component {i+1}',
+            line=dict(color=COLORS[i % len(COLORS)], width=1.5),
+            legendgroup=f'comp_{i}',
+            showlegend=True
+        ), row=1, col=1)
+        offset += 1.2
+
+    # Plot 2: Composition Basis (bar chart)
+    x_positions = np.arange(len(element_names))
+    bar_width = 0.8 / n_components
+
+    for i in range(n_components):
+        fig.add_trace(go.Bar(
+            x=[e + (i - n_components/2 + 0.5) * bar_width for e in x_positions],
+            y=comp_basis[i],
+            name=f'Component {i+1}',
+            marker_color=COLORS[i % len(COLORS)],
+            width=bar_width,
+            legendgroup=f'comp_{i}',
+            showlegend=False
+        ), row=1, col=2)
+
+    # Plot 3: Sample Coefficients Heatmap
+    fig.add_trace(go.Heatmap(
+        z=coefficients,
+        x=[f'Comp {i+1}' for i in range(n_components)],
+        y=[f'Sample {i+1}' for i in range(len(coefficients))],
+        colorscale='Viridis',
+        showscale=True,
+        colorbar=dict(title='Coeff.', x=0.45)
+    ), row=2, col=1)
+
+    # Plot 4: Average Component Contributions
+    avg_coefficients = np.mean(coefficients, axis=0)
+    fig.add_trace(go.Bar(
+        x=[f'Comp {i+1}' for i in range(n_components)],
+        y=avg_coefficients,
+        marker_color=[COLORS[i % len(COLORS)] for i in range(n_components)],
+        showlegend=False
+    ), row=2, col=2)
+
+    # Update layout
+    fig.update_xaxes(title_text='2θ (degree)', row=1, col=1)
+    fig.update_yaxes(title_text='Intensity (a.u.)', showticklabels=False, row=1, col=1)
+
+    fig.update_xaxes(
+        tickmode='array',
+        tickvals=list(range(len(element_names))),
+        ticktext=element_names,
+        row=1, col=2
+    )
+    fig.update_yaxes(title_text='Composition', row=1, col=2)
+
+    fig.update_xaxes(title_text='Component', row=2, col=1)
+    fig.update_yaxes(title_text='Sample', row=2, col=1)
+
+    fig.update_xaxes(title_text='Component', row=2, col=2)
+    fig.update_yaxes(title_text='Average Coefficient', row=2, col=2)
+
+    fig.update_layout(
+        title=title,
+        height=800,
+        template='plotly_white',
+        legend=dict(
+            orientation="h",
+            yanchor="bottom",
+            y=1.02,
+            xanchor="center",
+            x=0.5
+        )
+    )
+
+    return fig
+
+
+def create_endmember_plot(compositions: np.ndarray,
+                           endmembers: np.ndarray,
+                           coefficients: np.ndarray,
+                           element_names: List[str],
+                           title: str = "Endmember Decomposition") -> go.Figure:
+    """
+    Create visualization for endmember decomposition results
+
+    Args:
+        compositions: Original sample compositions (n_samples, n_elements)
+        endmembers: Endmember compositions (n_endmembers, n_elements)
+        coefficients: Decomposition coefficients (n_samples, n_endmembers)
+        element_names: List of element names
+        title: Plot title
+
+    Returns:
+        Plotly figure
+    """
+    n_endmembers = endmembers.shape[0]
+    n_samples = compositions.shape[0]
+
+    fig = make_subplots(
+        rows=1, cols=2,
+        subplot_titles=('Endmember Compositions', 'Sample Decomposition'),
+        specs=[[{"type": "bar"}, {"type": "heatmap"}]],
+        horizontal_spacing=0.12
+    )
+
+    # Plot 1: Endmember Compositions
+    x_positions = np.arange(len(element_names))
+    bar_width = 0.8 / n_endmembers
+
+    for i in range(n_endmembers):
+        fig.add_trace(go.Bar(
+            x=[e + (i - n_endmembers/2 + 0.5) * bar_width for e in x_positions],
+            y=endmembers[i],
+            name=f'Endmember {i+1}',
+            marker_color=COLORS[i % len(COLORS)],
+            width=bar_width
+        ), row=1, col=1)
+
+    # Plot 2: Coefficients Heatmap
+    fig.add_trace(go.Heatmap(
+        z=coefficients,
+        x=[f'EM {i+1}' for i in range(n_endmembers)],
+        y=[f'Sample {i+1}' for i in range(n_samples)],
+        colorscale='Blues',
+        showscale=True,
+        colorbar=dict(title='Fraction')
+    ), row=1, col=2)
+
+    # Update layout
+    fig.update_xaxes(
+        tickmode='array',
+        tickvals=list(range(len(element_names))),
+        ticktext=element_names,
+        row=1, col=1
+    )
+    fig.update_yaxes(title_text='Composition', row=1, col=1)
+
+    fig.update_xaxes(title_text='Endmember', row=1, col=2)
+    fig.update_yaxes(title_text='Sample', row=1, col=2)
+
+    fig.update_layout(
+        title=title,
+        height=500,
+        template='plotly_white',
+        legend=dict(
+            orientation="h",
+            yanchor="bottom",
+            y=1.02,
+            xanchor="center",
+            x=0.25
+        )
+    )
+
+    return fig
+
+
+def create_xrd_publication_plot(xrd_data: Dict[int, List],
+                                 selected_samples: Optional[List[int]] = None,
+                                 title: str = "",
+                                 offset_mode: bool = True,
+                                 show_legend: bool = True,
+                                 width: int = 800,
+                                 height: int = 600) -> go.Figure:
+    """
+    Create publication-ready XRD pattern plot
+
+    Args:
+        xrd_data: Dictionary with sample IDs as keys
+        selected_samples: List of sample IDs to plot
+        title: Plot title
+        offset_mode: Whether to stack patterns with offset
+        show_legend: Whether to show legend
+        width: Figure width
+        height: Figure height
+
+    Returns:
+        Publication-styled Plotly figure
+    """
+    fig = create_xrd_plot(xrd_data, selected_samples, title, offset_mode, show_legend)
+    fig = apply_publication_style(fig, width, height, show_grid=False)
+
+    # Remove title for publication (often added in figure caption)
+    if not title:
+        fig.update_layout(title=None)
+
+    return fig
+
+
+def create_column_preview_plot(df_preview: 'pd.DataFrame',
+                                theta_col: int,
+                                intensity_col: int) -> go.Figure:
+    """
+    Create preview plot for column selection
+
+    Args:
+        df_preview: Preview dataframe
+        theta_col: Selected 2theta column index
+        intensity_col: Selected intensity column index
+
+    Returns:
+        Plotly figure
+    """
+    fig = go.Figure()
+
+    try:
+        x_data = df_preview.iloc[:, theta_col].astype(float)
+        y_data = df_preview.iloc[:, intensity_col].astype(float)
+
+        fig.add_trace(go.Scatter(
+            x=x_data,
+            y=y_data,
+            mode='lines+markers',
+            name='Preview',
+            line=dict(color='#1f77b4', width=1.5),
+            marker=dict(size=4)
+        ))
+
+        fig.update_layout(
+            title='Data Preview',
+            xaxis_title='2θ (selected column)',
+            yaxis_title='Intensity (selected column)',
+            template='plotly_white',
+            height=300
+        )
+    except Exception:
+        fig.update_layout(
+            title='Invalid column selection',
+            annotations=[dict(
+                text='Cannot parse selected columns as numeric data',
+                xref='paper', yref='paper',
+                x=0.5, y=0.5, showarrow=False
+            )]
+        )
 
     return fig

@@ -367,6 +367,178 @@ def normalize_coefficient_by_integral(basis_vector: np.ndarray,
     return new_coefficient
 
 
+def normalize_rows_to_max(X: np.ndarray) -> np.ndarray:
+    """
+    Normalize each column to have maximum value of 1
+
+    Args:
+        X: Input matrix
+
+    Returns:
+        Normalized matrix
+    """
+    max_values = np.max(X, axis=0, keepdims=True)
+    max_values[max_values == 0] = 1
+    return X / max_values
+
+
+def multi_view_nmf(X_list: List[np.ndarray],
+                   k: int,
+                   max_iter: int = 1000,
+                   tol: float = 1e-14,
+                   lambda_W: float = 0,
+                   lambda_H: float = 0,
+                   show_progress: bool = True) -> Tuple[List[np.ndarray], np.ndarray]:
+    """
+    Multi-view NMF for simultaneous decomposition of XRD and composition data
+
+    This method shares a common coefficient matrix H across all views while
+    maintaining view-specific basis matrices W.
+
+    Args:
+        X_list: List of data matrices (each n_features x n_samples)
+        k: Number of components
+        max_iter: Maximum iterations
+        tol: Convergence tolerance
+        lambda_W: L2 regularization for W matrices
+        lambda_H: L2 regularization for H matrix
+        show_progress: Whether to print progress
+
+    Returns:
+        Tuple of (W_list, H_normalized)
+        - W_list: List of basis matrices for each view
+        - H_normalized: Normalized shared coefficient matrix
+    """
+    # Transpose input matrices
+    X_list = [X.T for X in X_list]
+
+    n_views = len(X_list)
+    m = X_list[0].shape[0]
+    n = X_list[0].shape[1]
+
+    # Normalize each view
+    X_list = [normalize_rows_to_max(X) for X in X_list]
+
+    # Calculate scale factors
+    scale_factors = [np.linalg.norm(X) for X in X_list]
+
+    # Normalize data
+    X_list_normalized = [X / scale for X, scale in zip(X_list, scale_factors)]
+
+    # Initialize
+    W_list = [np.random.rand(X.shape[0], k) for X in X_list_normalized]
+    H = np.random.rand(k, n)
+
+    num = 0
+    prev_loss = float('inf')
+
+    # First phase: optimize both W and H
+    for _ in range(max_iter):
+        num += 1
+
+        # Update H
+        numerator = np.zeros_like(H)
+        denominator = np.zeros_like(H)
+        for v in range(n_views):
+            numerator += W_list[v].T @ X_list_normalized[v]
+            denominator += W_list[v].T @ W_list[v] @ H
+        denominator += lambda_H
+        H *= numerator / (denominator + 1e-10)
+
+        # Update W for each view
+        for v in range(n_views):
+            numerator = X_list_normalized[v] @ H.T
+            denominator = W_list[v] @ H @ H.T + lambda_W
+            W_list[v] *= numerator / (denominator + 1e-10)
+
+        # Calculate loss
+        loss = 0
+        for v in range(n_views):
+            loss += np.linalg.norm(X_list_normalized[v] - W_list[v] @ H, 'fro') ** 2
+        loss += lambda_W * sum(np.sum(W ** 2) for W in W_list)
+        loss += lambda_H * np.sum(H ** 2)
+
+        # Check convergence
+        if num > 1 and abs(loss - prev_loss) < tol:
+            if show_progress:
+                print(f'Phase 1 Epoch: {num}, Loss: {loss:.10f}, converged')
+            break
+        if show_progress and num % (max_iter // 10) == 0:
+            print(f'Phase 1 Epoch: {num}, Loss: {loss:.10f}')
+
+        prev_loss = loss
+
+    # Second phase: fine-tune H only
+    for _ in range(max_iter):
+        num += 1
+
+        # Update H
+        numerator = np.zeros_like(H)
+        denominator = np.zeros_like(H)
+        for v in range(n_views):
+            numerator += W_list[v].T @ X_list_normalized[v]
+            denominator += W_list[v].T @ W_list[v] @ H
+        denominator += lambda_H
+        H *= numerator / (denominator + 1e-10)
+
+        # Calculate loss
+        loss = 0
+        for v in range(n_views):
+            loss += np.linalg.norm(X_list_normalized[v] - W_list[v] @ H, 'fro') ** 2
+        loss += lambda_W * sum(np.sum(W ** 2) for W in W_list)
+        loss += lambda_H * np.sum(H ** 2)
+
+        # Check convergence
+        if num > 1 and abs(loss - prev_loss) < tol / 10000:
+            if show_progress:
+                print(f'Phase 2 Epoch: {num}, Loss: {loss:.10f}, converged')
+            break
+        if show_progress and num % (max_iter // 10) == 0:
+            print(f'Phase 2 Epoch: {num}, Loss: {loss:.10f}')
+
+        prev_loss = loss
+
+    # Restore scale
+    W_list = [W * scale for W, scale in zip(W_list, scale_factors)]
+    W_list = [W.T for W in W_list]
+
+    # Normalize H
+    row_sums = H.T.sum(axis=1, keepdims=True)
+    row_sums[row_sums == 0] = 1
+    normalized_H = H.T / row_sums
+
+    return W_list, normalized_H
+
+
+def endmember_decomposition(compositions: np.ndarray,
+                            endmembers: np.ndarray) -> np.ndarray:
+    """
+    Decompose compositions into endmember contributions using non-negative least squares
+
+    Args:
+        compositions: Sample compositions (n_samples, n_elements)
+        endmembers: Endmember compositions (n_endmembers, n_elements)
+
+    Returns:
+        Coefficients matrix (n_samples, n_endmembers)
+    """
+    from scipy.optimize import nnls
+
+    n_samples = compositions.shape[0]
+    n_endmembers = endmembers.shape[0]
+    coefficients = np.zeros((n_samples, n_endmembers))
+
+    for i in range(n_samples):
+        coefficients[i], _ = nnls(endmembers.T, compositions[i])
+
+    # Normalize coefficients to sum to 1
+    row_sums = coefficients.sum(axis=1, keepdims=True)
+    row_sums[row_sums == 0] = 1
+    coefficients = coefficients / row_sums
+
+    return coefficients
+
+
 def find_optimal_n_components(xrd_data: Dict[int, List],
                               max_components: int = 20,
                               step: int = 1) -> List[Tuple[int, float]]:

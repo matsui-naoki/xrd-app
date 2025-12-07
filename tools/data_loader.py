@@ -11,6 +11,132 @@ from typing import Dict, List, Tuple, Optional, Union
 import io
 
 
+def get_file_columns(content: str) -> Tuple[List[str], pd.DataFrame]:
+    """
+    Get column information from file content for user selection
+
+    Args:
+        content: File content as string
+
+    Returns:
+        Tuple of (column_names, preview_dataframe)
+    """
+    lines = content.strip().split('\n')
+
+    # Try to detect delimiter
+    first_data_line = None
+    for line in lines:
+        line = line.strip()
+        if line and not line.startswith('#') and not line.startswith('*'):
+            first_data_line = line
+            break
+
+    if first_data_line is None:
+        return [], pd.DataFrame()
+
+    # Detect delimiter
+    if '\t' in first_data_line:
+        delimiter = '\t'
+    elif ',' in first_data_line:
+        delimiter = ','
+    elif ';' in first_data_line:
+        delimiter = ';'
+    else:
+        delimiter = None  # whitespace
+
+    # Try to parse as dataframe
+    try:
+        if delimiter:
+            df = pd.read_csv(io.StringIO(content), delimiter=delimiter,
+                           comment='#', header=None, nrows=10)
+        else:
+            df = pd.read_csv(io.StringIO(content), delim_whitespace=True,
+                           comment='#', header=None, nrows=10)
+
+        # Check if first row is header
+        first_row = df.iloc[0]
+        is_header = any(isinstance(v, str) and not v.replace('.', '').replace('-', '').isdigit()
+                       for v in first_row)
+
+        if is_header:
+            if delimiter:
+                df = pd.read_csv(io.StringIO(content), delimiter=delimiter, comment='#', nrows=10)
+            else:
+                df = pd.read_csv(io.StringIO(content), delim_whitespace=True, comment='#', nrows=10)
+            columns = list(df.columns)
+        else:
+            columns = [f"Column {i+1}" for i in range(len(df.columns))]
+            df.columns = columns
+
+        return columns, df
+
+    except Exception as e:
+        return [], pd.DataFrame()
+
+
+def parse_with_column_selection(content: str,
+                                 theta_col: int = 0,
+                                 intensity_col: int = 1,
+                                 delimiter: Optional[str] = None,
+                                 skip_rows: int = 0) -> Tuple[np.ndarray, np.ndarray]:
+    """
+    Parse file with user-specified column selection
+
+    Args:
+        content: File content
+        theta_col: Column index for 2theta (0-based)
+        intensity_col: Column index for intensity (0-based)
+        delimiter: Delimiter (None for auto-detect)
+        skip_rows: Number of header rows to skip
+
+    Returns:
+        Tuple of (two_theta, intensity)
+    """
+    lines = content.strip().split('\n')
+
+    # Auto-detect delimiter if not specified
+    if delimiter is None:
+        first_data_line = None
+        for line in lines[skip_rows:]:
+            line = line.strip()
+            if line and not line.startswith('#') and not line.startswith('*'):
+                first_data_line = line
+                break
+
+        if first_data_line:
+            if '\t' in first_data_line:
+                delimiter = '\t'
+            elif ',' in first_data_line:
+                delimiter = ','
+            elif ';' in first_data_line:
+                delimiter = ';'
+
+    two_theta = []
+    intensity = []
+
+    for i, line in enumerate(lines):
+        if i < skip_rows:
+            continue
+
+        line = line.strip()
+        if not line or line.startswith('#') or line.startswith('*'):
+            continue
+
+        if delimiter:
+            parts = line.split(delimiter)
+        else:
+            parts = line.split()
+
+        if len(parts) > max(theta_col, intensity_col):
+            try:
+                two_theta.append(float(parts[theta_col]))
+                intensity.append(float(parts[intensity_col]))
+            except ValueError:
+                continue
+
+    return np.array(two_theta), np.array(intensity)
+
+
 def detect_file_format(content: str) -> str:
     """
     Detect the format of XRD data file
